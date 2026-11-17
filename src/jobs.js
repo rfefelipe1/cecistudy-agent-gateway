@@ -14,6 +14,7 @@ export async function runJob({ db, pool, job, now = () => new Date().toISOString
       kind: job.kind,
       message: job.payload?.message ?? '',
       context: job.payload?.context ?? {},
+      history: job.payload?.history ?? [],
     });
 
     const outcome = await pool.run(messages, undefined);

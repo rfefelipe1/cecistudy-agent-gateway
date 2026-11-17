@@ -10,6 +10,13 @@ export const SYSTEM_PROMPT = `Você é o Cecinho, um agente acolhedor na convers
 Sua função é ajudar a usuária a organizar e executar tarefas acadêmicas sem substituir
 sua autoria, suas ideias ou suas decisões.
 
+Esta é uma conversa em andamento: leia o histórico antes de responder.
+Não repita perguntas que o histórico já respondeu — inclusive "não sei" e "depois",
+que são respostas válidas e valem como decisão de seguir sem a informação.
+Se o histórico já basta para agir, proponha o plano em vez de perguntar de novo.
+Não repita com outras palavras a resposta anterior; avance a conversa.
+Nunca peça de novo um dado que já está no contexto ou no histórico.
+
 Use somente o contexto fornecido.
 Não invente prazos, referências, fatos ou decisões.
 Faça no máximo três perguntas por rodada.
@@ -39,8 +46,10 @@ Responda SEMPRE com um único objeto JSON, sem texto fora dele, neste formato:
 
 Regras do JSON:
 - "message" é obrigatório e sempre presente.
-- "questions" no máximo 3; use quando faltar informação essencial.
-- "plan" quando você já consegue propor um caminho; no máximo 12 passos.
+- "questions" no máximo 3; use quando faltar informação essencial — nunca para repetir
+  pergunta já feita ou já respondida no histórico.
+- "plan" quando você já consegue propor um caminho, mesmo sem todas as respostas; no
+  máximo 12 passos.
 - "artifacts" no máximo 3, cada um com no máximo 1000 caracteres.
 - Nunca inclua "dueDate" que você não tenha recebido do contexto.`;
 
@@ -75,14 +84,40 @@ const MODE_HINT = {
   artifact: 'Proponha um artefato curto e útil, além da mensagem.',
 };
 
-export function buildMessages({ kind = 'analyze', message = '', context = {} }) {
+/**
+ * O que o mobile manda é entrada hostil até prova em contrário: só os dois papéis
+ * da conversa atravessam, com tamanho limitado e as rodadas mais novas.
+ */
+const MAX_HISTORY_TURNS = 8;
+const MAX_HISTORY_CHARS = 400;
+
+function historyTurns(history) {
+  if (!Array.isArray(history)) return [];
+  return history
+    .filter((turn) => turn && (turn.role === 'user' || turn.role === 'assistant'))
+    .slice(-MAX_HISTORY_TURNS)
+    .map((turn) => ({ role: turn.role, content: asText(turn.content, MAX_HISTORY_CHARS) }))
+    .filter((turn) => turn.content);
+}
+
+export function buildMessages({ kind = 'analyze', message = '', context = {}, history = [] }) {
   const contextJson = JSON.stringify(context ?? {});
+  const turns = historyTurns(history);
+  const historyLines = turns.length
+    ? [
+        'Histórico da conversa (mais antigo primeiro):',
+        ...turns.map((turn) => `${turn.role === 'user' ? 'usuária' : 'cecinho'}: ${turn.content}`),
+        '',
+      ]
+    : [];
+
   const user = [
     `Modo: ${MODE_HINT[kind] ?? MODE_HINT.analyze}`,
     `Idioma: pt-BR`,
     'Contexto fornecido (use somente isso):',
     contextJson,
     '',
+    ...historyLines,
     'Mensagem da usuária:',
     String(message ?? ''),
     '',
