@@ -1,0 +1,18 @@
+{
+  "name": "cecistudy-agent-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Gateway do Cecinho Agent (cecistudy): sessão de dispositivo, fila idempotente de jobs e ponte segura para a NVIDIA NIM.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.18.0"
+  }
+}

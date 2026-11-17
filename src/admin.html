@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>cecistudy · gateway do cecinho</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #2a1f1c;
+        --muted: #7a6a63;
+        --line: #e8dcd6;
+        --surface: #fffaf7;
+        --brand: #8c4a3f;
+        --ok: #2f6b4f;
+        --bad: #a8382f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: var(--ink);
+        background: var(--surface);
+      }
+      header, main { max-width: 960px; margin: 0 auto; padding: 0 20px; }
+      header { padding-top: 28px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+      h1 { font-size: 18px; margin: 0; }
+      h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; }
+      .hint { color: var(--muted); font-size: 12px; }
+      section { border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin: 16px 0; background: #fff; }
+      label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+      input, textarea, button { font: inherit; }
+      input, textarea {
+        width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+        background: var(--surface); color: var(--ink);
+      }
+      textarea { min-height: 90px; resize: vertical; }
+      button {
+        padding: 10px 16px; border-radius: 10px; border: 0; background: var(--brand);
+        color: #fff; cursor: pointer; font-weight: 600;
+      }
+      button:disabled { opacity: .5; cursor: default; }
+      button.ghost { background: transparent; color: var(--brand); border: 1px solid var(--line); }
+      .row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+      .row > * { flex: 1 1 200px; }
+      .row > button { flex: 0 0 auto; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; }
+      code { font: 12px ui-monospace, SFMono-Regular, monospace; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+      .card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+      .card b { display: block; font-size: 20px; }
+      .card span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+      .error { color: var(--bad); font-size: 12px; min-height: 18px; }
+      .ok { color: var(--ok); }
+      pre { white-space: pre-wrap; word-break: break-word; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin: 10px 0 0; }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>gateway do cecinho</h1>
+      <span class="hint" id="who"></span>
+    </header>
+
+    <main>
+      <section id="login-box">
+        <h2>entrar</h2>
+        <div class="row">
+          <div>
+            <label for="password">senha do painel</label>
+            <input id="password" type="password" autocomplete="current-password" />
+          </div>
+          <button id="login">entrar</button>
+        </div>
+        <p class="error" id="login-error"></p>
+      </section>
+
+      <div id="panel" hidden>
+        <section>
+          <h2>estado</h2>
+          <div class="grid" id="overview"></div>
+        </section>
+
+        <section>
+          <div class="row" style="align-items:center; margin-bottom:10px">
+            <h2 style="margin:0">aparelhos</h2>
+            <button class="ghost" id="refresh" style="flex:0 0 auto">atualizar</button>
+          </div>
+          <table>
+            <thead>
+              <tr><th>aparelho</th><th>visto em</th><th>estado</th><th></th></tr>
+            </thead>
+            <tbody id="devices"></tbody>
+          </table>
+          <p class="hint">Revogar derruba a sessão na próxima requisição. O aparelho pode abrir outra com a chave do app.</p>
+        </section>
+
+        <section>
+          <h2>jobs</h2>
+          <table>
+            <thead>
+              <tr><th>operação</th><th>tarefa</th><th>status</th><th>erro</th><th>criado</th></tr>
+            </thead>
+            <tbody id="jobs"></tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>playground</h2>
+          <label for="prompt">um prompt direto no modelo (sem contexto de tarefa)</label>
+          <textarea id="prompt" placeholder="responda em uma frase: o que é um plano mínimo viável?"></textarea>
+          <div class="row" style="margin-top:10px">
+            <button id="run">executar</button>
+          </div>
+          <p class="error" id="playground-error"></p>
+          <pre id="playground-out" hidden></pre>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      let token = null;
+
+      const $ = (id) => document.getElementById(id);
+
+      async function api(path, init = {}) {
+        const response = await fetch(`/v1${path}`, {
+          ...init,
+          headers: {
+            'content-type': 'application/json',
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+            ...(init.headers || {}),
+          },
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (response.status === 401) logout();
+          throw new Error(body.error || `falha (${response.status})`);
+        }
+        return body;
+      }
+
+      function logout() {
+        token = null;
+        $('panel').hidden = true;
+        $('login-box').hidden = false;
+        $('who').textContent = '';
+      }
+
+      function cell(text) {
+        const td = document.createElement('td');
+        td.textContent = text == null ? '' : String(text);
+        return td;
+      }
+
+      function renderOverview(data) {
+        const box = $('overview');
+        box.replaceChildren();
+        const cards = [
+          ['modelo', data.model],
+          ['chaves', data.keyCount],
+          ['aparelhos', data.deviceCount],
+          ['revogados', data.revokedCount],
+          ['jobs ok', data.jobs.done || 0],
+          ['jobs falhos', data.jobs.failed || 0],
+          ['na fila', (data.jobs.queued_remote || 0) + (data.jobs.processing || 0)],
+          ['uptime', `${Math.floor(data.uptimeSeconds / 60)} min`],
+        ];
+        for (const [label, value] of cards) {
+          const card = document.createElement('div');
+          card.className = 'card';
+          const strong = document.createElement('b');
+          strong.textContent = String(value);
+          const span = document.createElement('span');
+          span.textContent = label;
+          card.append(strong, span);
+          box.append(card);
+        }
+      }
+
+      function renderDevices(devices) {
+        const body = $('devices');
+        body.replaceChildren();
+        if (devices.length === 0) {
+          const tr = document.createElement('tr');
+          const td = cell('nenhum aparelho abriu sessão ainda');
+          td.colSpan = 4;
+          tr.append(td);
+          body.append(tr);
+          return;
+        }
+        for (const device of devices) {
+          const tr = document.createElement('tr');
+          tr.append(cell(device.id), cell(device.lastSeenAt), cell(device.revokedAt ? 'revogado' : 'ativo'));
+          const actions = document.createElement('td');
+          if (!device.revokedAt) {
+            const button = document.createElement('button');
+            button.className = 'ghost';
+            button.textContent = 'revogar';
+            button.onclick = async () => {
+              button.disabled = true;
+              try {
+                await api(`/admin/devices/${encodeURIComponent(device.id)}`, { method: 'DELETE' });
+                await refresh();
+              } catch (error) {
+                button.disabled = false;
+                alert(error.message);
+              }
+            };
+            actions.append(button);
+          }
+          tr.append(actions);
+          body.append(tr);
+        }
+      }
+
+      function renderJobs(jobs) {
+        const body = $('jobs');
+        body.replaceChildren();
+        if (jobs.length === 0) {
+          const tr = document.createElement('tr');
+          const td = cell('nenhum job ainda');
+          td.colSpan = 5;
+          tr.append(td);
+          body.append(tr);
+          return;
+        }
+        for (const job of jobs) {
+          const tr = document.createElement('tr');
+          tr.append(
+            cell(job.operationId),
+            cell(job.taskId),
+            cell(job.status),
+            cell(job.error || ''),
+            cell(job.createdAt),
+          );
+          body.append(tr);
+        }
+      }
+
+      async function refresh() {
+        const [overview, devices, jobs] = await Promise.all([
+          api('/admin/overview'),
+          api('/admin/devices'),
+          api('/admin/jobs?limit=50'),
+        ]);
+        renderOverview(overview);
+        renderDevices(devices.devices);
+        renderJobs(jobs.jobs);
+      }
+
+      $('login').onclick = async () => {
+        $('login-error').textContent = '';
+        try {
+          const session = await api('/admin/login', {
+            method: 'POST',
+            body: JSON.stringify({ password: $('password').value }),
+          });
+          token = session.token;
+          $('login-box').hidden = true;
+          $('panel').hidden = false;
+          $('who').textContent = `sessão até ${new Date(session.expiresAt).toLocaleTimeString('pt-BR')}`;
+          await refresh();
+        } catch (error) {
+          $('login-error').textContent = error.message;
+        }
+      };
+
+      $('password').addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') $('login').click();
+      });
+
+      $('refresh').onclick = () => refresh().catch((error) => alert(error.message));
+
+      $('run').onclick = async () => {
+        const prompt = $('prompt').value.trim();
+        if (!prompt) return;
+        $('playground-error').textContent = '';
+        $('run').disabled = true;
+        $('playground-out').hidden = true;
+        try {
+          const result = await api('/admin/playground', {
+            method: 'POST',
+            body: JSON.stringify({ prompt }),
+          });
+          $('playground-out').textContent = result.text;
+          $('playground-out').hidden = false;
+        } catch (error) {
+          $('playground-error').textContent = error.message;
+        } finally {
+          $('run').disabled = false;
+        }
+      };
+    </script>
+  </body>
+</html>

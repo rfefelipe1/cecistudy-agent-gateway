@@ -1,0 +1,30 @@
+# Blueprint do Render (Web Service Free).
+#
+# Os segredos usam `sync: false`: o valor é preenchido no painel do Render e
+# nunca entra no repositório.
+services:
+  - type: web
+    name: cecistudy-agent-gateway
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci --omit=dev
+    startCommand: node src/server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: '24'
+      - key: NIM_MODEL
+        value: nvidia/nemotron-3.5-bolt-e4b
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_AUTH_TOKEN
+        sync: false
+      - key: NIM_API_KEYS
+        sync: false
+      - key: GATEWAY_SESSION_SECRET
+        sync: false
+      - key: AGENT_APP_KEY
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
