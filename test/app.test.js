@@ -99,6 +99,30 @@ test('healthz responde sem autenticação', async (t) => {
   assert.equal((await response.json()).ok, true);
 });
 
+test('preflight CORS libera o app no navegador e no WebView', async (t) => {
+  const { base, close } = await boot();
+  t.after(close);
+
+  const preflight = await fetch(`${base}/v1/auth/session`, {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'http://localhost:3000',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type,x-app-key',
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), '*');
+  const allowed = preflight.headers.get('access-control-allow-headers') ?? '';
+  assert.match(allowed, /x-app-key/);
+  assert.match(allowed, /idempotency-key/);
+  assert.match(preflight.headers.get('access-control-allow-methods') ?? '', /POST/);
+
+  // Resposta real também precisa da origem liberada, senão o navegador esconde o corpo.
+  const health = await fetch(`${base}/healthz`);
+  assert.equal(health.headers.get('access-control-allow-origin'), '*');
+});
+
 test('sessão exige a chave do app e um installationId válido', async (t) => {
   const { base, close } = await boot();
   t.after(close);

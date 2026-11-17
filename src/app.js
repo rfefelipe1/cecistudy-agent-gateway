@@ -25,8 +25,21 @@ const ADMIN_HTML = readFileSync(join(HERE, 'admin.html'), 'utf8');
 const JOB_KINDS = new Set(['analyze', 'plan', 'artifact']);
 const DEVICE_ID = /^[A-Za-z0-9_.:-]{8,200}$/;
 
+// O app chama o gateway de outra origem: navegador em dev (`localhost:3000`) e
+// WebView do Capacitor (`capacitor://localhost` / `http://localhost`). Sem
+// CORS o preflight morre e o job nunca sai do aparelho. `*` é aceitável aqui
+// porque a API não usa cookie — o token vai em `Authorization` e o que protege
+// a cota é o JWT por aparelho + rate limit, não a origem.
+const CORS_HEADERS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
+  'access-control-allow-headers': 'content-type, authorization, x-app-key, idempotency-key',
+  'access-control-max-age': '600',
+};
+
 function send(res, status, body, contentType = 'application/json; charset=utf-8') {
   res.statusCode = status;
+  for (const [name, value] of Object.entries(CORS_HEADERS)) res.setHeader(name, value);
   res.setHeader('content-type', contentType);
   res.setHeader('cache-control', 'no-store');
   res.end(typeof body === 'string' ? body : JSON.stringify(body));
@@ -104,6 +117,12 @@ export function createApp({
     const url = new URL(req.url ?? '/', 'http://gateway');
     const path = canonical(url.pathname);
     const method = req.method ?? 'GET';
+
+    // Preflight do navegador/WebView: responde antes de qualquer rota e sem auth.
+    if (method === 'OPTIONS') {
+      res.writeHead(204, CORS_HEADERS);
+      return res.end();
+    }
 
     if (method === 'GET' && path === '/healthz') {
       return send(res, 200, { ok: true, at: now() });
