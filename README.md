@@ -12,10 +12,17 @@ conversar com a NVIDIA NIM sem carregar chave de API no aparelho.
 ```
 app mobile ──(X-App-Key)──► POST /v1/auth/session ──► JWT (12h)
                                                                  │
-app mobile ──(Bearer JWT)──► POST /v1/agent/jobs ──► 202 ──┐
-                                                            ├─► NIM ─► JSON validado
+app mobile ──(Bearer JWT)──► POST /v1/agent/conversa ──► SSE ──┐
+                                                               ├─► NIM (pool de modelos)
+app mobile ──(Bearer JWT)──► POST /v1/agent/jobs ──► 202 ──┐   │      │
+                                                           ├─► NIM ─► JSON validado
 app mobile ──(Bearer JWT)──► GET  /v1/agent/jobs/:id ──► done
 ```
+
+O turno de conversa também pode pedir **busca na web**: o modelo responde
+`{ "buscar": "termo" }`, o gateway consulta a Tavily e devolve os trechos ao
+modelo, que então responde no formato normal. As páginas usadas voltam em
+`fontes` e o app mostra os links — o modelo nunca inventa URL.
 
 Três decisões que valem como código:
 
@@ -102,6 +109,11 @@ tenta de novo.
 Todas em `.env.example`. As quatro obrigatórias: `NIM_API_KEYS`,
 `GATEWAY_SESSION_SECRET`, `AGENT_APP_KEY`, `ADMIN_PASSWORD`. O processo recusa
 subir sem elas.
+
+`NIM_MODELS` é uma pool em ordem de preferência (default: nemotron-3-ultra →
+deepseek-v4-pro → kimi-k3 → glm-5-3 → gpt-oss-120b). Modelo que responde 404,
+limite ou queda passa para o próximo. `TAVILY_API_KEY` é opcional: sem ela o
+Cecinho conversa sem pesquisar, e o turno não falha.
 
 ## Contrato com o app
 

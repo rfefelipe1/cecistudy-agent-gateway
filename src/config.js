@@ -4,10 +4,23 @@
 const DEFAULTS = {
   port: 10000,
   databaseUrl: 'file:./data/gateway.db',
-  nimModel: 'nvidia/nemotron-3.5-bolt-e4b',
+  // Pool ordenada por qualidade: o primeiro que responder bem vence; os
+  // seguintes cobrem 404/limite/queda do provedor. `gpt-oss-120b` fecha como
+  // saída rápida quando os grandes estão indisponíveis.
+  nimModels: [
+    'nvidia/nemotron-3-ultra-550b-a55b',
+    'deepseek-ai/deepseek-v4-pro',
+    'moonshotai/kimi-k3',
+    'z-ai/glm-5-3',
+    'openai/gpt-oss-120b',
+  ],
   nimBaseUrl: 'https://integrate.api.nvidia.com',
   nimTimeoutMs: 60_000,
   nimMaxAttemptsPerKey: 2,
+  // Teto do turno de conversa: o app corta em 60 s (SPEC-038 RF15), então o
+  // gateway precisa desistir antes para ainda mandar `erro` em vez de sumir.
+  conversationTimeoutMs: 50_000,
+  tavilyMaxResults: 5,
   sessionTtlSeconds: 12 * 60 * 60,
   adminTtlSeconds: 60 * 60,
   sessionsPerMinutePerIp: 10,
@@ -42,10 +55,16 @@ export function loadConfig(env = process.env) {
     databaseUrl: env.DATABASE_URL?.trim() || DEFAULTS.databaseUrl,
     databaseAuthToken: env.DATABASE_AUTH_TOKEN?.trim() || undefined,
     nimApiKeys: list(env.NIM_API_KEYS),
-    nimModel: env.NIM_MODEL?.trim() || DEFAULTS.nimModel,
+    nimModels: list(env.NIM_MODELS).length > 0 ? list(env.NIM_MODELS) : DEFAULTS.nimModels,
     nimBaseUrl: env.NIM_BASE_URL?.trim() || DEFAULTS.nimBaseUrl,
     nimTimeoutMs: positiveNumber(env.NIM_TIMEOUT_MS, DEFAULTS.nimTimeoutMs),
     nimMaxAttemptsPerKey: positiveNumber(env.NIM_MAX_ATTEMPTS_PER_KEY, DEFAULTS.nimMaxAttemptsPerKey),
+    conversationTimeoutMs: positiveNumber(
+      env.CONVERSATION_TIMEOUT_MS,
+      DEFAULTS.conversationTimeoutMs,
+    ),
+    tavilyApiKey: env.TAVILY_API_KEY?.trim() || '',
+    tavilyMaxResults: positiveNumber(env.TAVILY_MAX_RESULTS, DEFAULTS.tavilyMaxResults),
     sessionSecret: env.GATEWAY_SESSION_SECRET?.trim() || '',
     sessionTtlSeconds: positiveNumber(env.SESSION_TTL_SECONDS, DEFAULTS.sessionTtlSeconds),
     adminTtlSeconds: positiveNumber(env.ADMIN_TTL_SECONDS, DEFAULTS.adminTtlSeconds),

@@ -19,10 +19,10 @@ const SAMPLE_OUTPUT = {
   artifacts: [{ name: 'Roteiro', mimeType: 'text/markdown', content: 'passo a passo' }],
 };
 
-async function boot() {
+async function boot(overrides = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'gateway-test-'));
   const db = await openDb({ url: `file:${join(directory, 'test.db')}` });
-  const pool = {
+  const pool = overrides.pool ?? {
     calls: 0,
     run: async () => {
       pool.calls += 1;
@@ -35,19 +35,31 @@ async function boot() {
     adminTtlSeconds: 3600,
     appKey: 'chave-do-app',
     adminPassword: 'senha-admin',
-    nimModel: 'nvidia/nemotron-3.5-bolt-e4b',
+    nimModels: ['modelo-de-teste'],
     nimApiKeys: ['chave-1'],
     nimMaxAttemptsPerKey: 2,
     nimBaseUrl: 'http://provedor.invalido',
     nimTimeoutMs: 200,
+    conversationTimeoutMs: 5000,
+    tavilyApiKey: '',
+    tavilyMaxResults: 5,
     sessionsPerMinutePerIp: 100,
     adminPerMinutePerIp: 100,
     jobsPerMinutePerDevice: 100,
     conversationsPerMinutePerDevice: 100,
     maxBodyBytes: 262_144,
+    ...overrides.config,
   };
 
-  const server = createServer(createApp({ config, db, pool, logger: { error() {} } }));
+  const server = createServer(
+    createApp({
+      config,
+      db,
+      pool,
+      logger: { error() {} },
+      search: 'search' in overrides ? overrides.search : null,
+    }),
+  );
   await new Promise((resolve) => server.listen(0, resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
 
@@ -346,6 +358,78 @@ test('conversa recusa conteúdo clínico antes do provedor', async (t) => {
 
   assert.equal(response.status, 422);
   assert.equal(pool.calls, 0);
+});
+
+test('conversa com busca devolve as fontes usadas', async (t) => {
+  const pedido = { ok: true, text: JSON.stringify({ buscar: 'recorte do tema tcc' }) };
+  const pool = {
+    calls: 0,
+    run: async () => {
+      pool.calls += 1;
+      return pool.calls === 1 ? pedido : { ok: true, text: JSON.stringify(SAMPLE_OUTPUT) };
+    },
+  };
+  const consultas = [];
+  const search = async (query) => {
+    consultas.push(query);
+    return {
+      ok: true,
+      results: [
+        { titulo: 'Como delimitar um tema', url: 'https://exemplo.org/tema', trecho: 'recorte' },
+        { titulo: 'TCC em dez passos', url: 'https://exemplo.org/tcc', trecho: 'passos' },
+      ],
+    };
+  };
+  const { base, close } = await boot({ pool, search });
+  t.after(close);
+
+  const { token } = await session(base, 'aparelho-1234');
+  const response = await fetch(`${base}/v1/agent/conversa`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ mensagem: 'como delimito o tema?', historico: [] }),
+  });
+
+  const eventos = await sseEvents(response);
+  assert.deepEqual(
+    eventos.filter((evento) => evento.evento === 'fase').map((evento) => evento.data),
+    ['lendo_memoria', 'pesquisando', 'lendo_fontes', 'resposta'],
+  );
+
+  const resposta = JSON.parse(eventos.find((evento) => evento.evento === 'resposta').data);
+  assert.deepEqual(consultas, ['recorte do tema tcc']);
+  assert.deepEqual(resposta.fontes, [
+    { titulo: 'Como delimitar um tema', url: 'https://exemplo.org/tema' },
+    { titulo: 'TCC em dez passos', url: 'https://exemplo.org/tcc' },
+  ]);
+  assert.equal(pool.calls, 2);
+});
+
+test('sem busca configurada o turno segue e não inventa fonte', async (t) => {
+  const pool = {
+    calls: 0,
+    run: async () => {
+      pool.calls += 1;
+      return pool.calls === 1
+        ? { ok: true, text: JSON.stringify({ buscar: 'recorte do tema tcc' }) }
+        : { ok: true, text: JSON.stringify(SAMPLE_OUTPUT) };
+    },
+  };
+  const { base, close } = await boot({ pool });
+  t.after(close);
+
+  const { token } = await session(base, 'aparelho-1234');
+  const response = await fetch(`${base}/v1/agent/conversa`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ mensagem: 'como delimito o tema?', historico: [] }),
+  });
+
+  const resposta = JSON.parse(
+    (await sseEvents(response)).find((evento) => evento.evento === 'resposta').data,
+  );
+  assert.deepEqual(resposta.fontes, []);
+  assert.equal(pool.calls, 2);
 });
 
 test('admin entra, lista e revoga aparelho', async (t) => {

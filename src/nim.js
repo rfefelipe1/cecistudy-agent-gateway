@@ -8,6 +8,8 @@ export const NIM_ERROR_MESSAGES = {
   provider_down: 'provedor indisponível',
   rejected: 'conteúdo recusado',
   context_too_large: 'contexto grande demais',
+  not_found: 'modelo indisponível',
+  timeout: 'o provedor não respondeu a tempo',
   unknown: 'o provedor falhou agora',
 };
 
@@ -16,12 +18,14 @@ export function nimError(kind, status) {
 }
 
 /**
- * Round-robin determinístico. `429`/`503` passam para a próxima chave; erro
- * definitivo (`401`/`402`/`413`/`422`) encerra na hora.
+ * Round-robin de **modelo e chave**. Um modelo fora do ar (404/limite/queda)
+ * passa para o próximo da lista; erro definitivo (`401`/`402`/`413`/`422`)
+ * encerra na hora, porque repetir com outra chave não resolve.
  */
 export class NimPool {
-  constructor({ apiKeys, maxAttemptsPerKey }, adapter) {
+  constructor({ apiKeys, models, maxAttemptsPerKey }, adapter) {
     this.apiKeys = apiKeys;
+    this.models = models && models.length > 0 ? models : [];
     this.maxAttemptsPerKey = maxAttemptsPerKey;
     this.adapter = adapter;
     this.cursor = 0;
@@ -31,6 +35,10 @@ export class NimPool {
     return this.apiKeys.length;
   }
 
+  get defaultModel() {
+    return this.models[0] ?? null;
+  }
+
   nextKey() {
     if (this.apiKeys.length === 0) throw new Error('nim: nenhuma chave configurada');
     const key = this.apiKeys[this.cursor % this.apiKeys.length];
@@ -38,40 +46,49 @@ export class NimPool {
     return key;
   }
 
-  async run(messages, signal) {
-    if (this.apiKeys.length === 0) {
+  async run(messages, signal, { deadline } = {}) {
+    if (this.apiKeys.length === 0 || this.models.length === 0) {
       return { ok: false, error: nimError('provider_down', 503) };
     }
 
     let lastError;
-    const totalAttempts = this.apiKeys.length * this.maxAttemptsPerKey;
+    // Teto de tentativas: 5 modelos × 2 tentativas por chave seria caro demais
+    // dentro de 50 s. Um passeio por modelo + uma repetição cobre o caso real.
+    const totalAttempts = Math.min(this.models.length * this.maxAttemptsPerKey, this.models.length + 1);
 
     for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
+      if (deadline && Date.now() >= deadline) {
+        return { ok: false, error: nimError('timeout', 504) };
+      }
+      const model = this.models[attempt % this.models.length];
       const key = this.nextKey();
-      const outcome = await this.adapter.call(key, messages, signal);
+      const outcome = await this.adapter.call(key, messages, signal, { model, deadline });
       if (outcome.ok) return outcome;
 
       lastError = outcome.error;
-      if (outcome.error.kind === 'rate_limit' || outcome.error.kind === 'provider_down') {
-        continue;
+      if (outcome.error.kind === 'rejected' || outcome.error.kind === 'context_too_large') {
+        return outcome;
       }
-      return outcome;
     }
 
     return { ok: false, error: lastError ?? nimError('provider_down', 503) };
   }
 }
 
-export async function callNim(config, apiKey, messages, signal) {
+export async function callNim(config, apiKey, messages, signal, options = {}) {
+  const { model = config.model, maxTokens = 2048, deadline } = options;
+  const remaining = deadline ? Math.max(0, deadline - Date.now()) : config.timeoutMs;
+  if (remaining <= 0) return { ok: false, error: nimError('timeout', 504) };
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), Math.min(config.timeoutMs, remaining));
   signal?.addEventListener('abort', () => controller.abort(), { once: true });
 
   const body = {
-    model: config.model,
+    model,
     messages,
     temperature: 0.7,
-    max_tokens: 2048,
+    max_tokens: maxTokens,
     stream: false,
   };
 
@@ -91,6 +108,7 @@ export async function callNim(config, apiKey, messages, signal) {
     if (response.status === 401 || response.status === 402) {
       return { ok: false, error: nimError('rejected', response.status) };
     }
+    if (response.status === 404) return { ok: false, error: nimError('not_found', 404) };
     if (response.status === 413) return { ok: false, error: nimError('context_too_large', 413) };
     if (response.status === 422) return { ok: false, error: nimError('rejected', 422) };
     if (response.status === 503) return { ok: false, error: nimError('provider_down', 503) };

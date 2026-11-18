@@ -8,14 +8,19 @@ const config = loadConfig();
 const db = await openDb({ url: config.databaseUrl, authToken: config.databaseAuthToken });
 
 const pool = new NimPool(
-  { apiKeys: config.nimApiKeys, maxAttemptsPerKey: config.nimMaxAttemptsPerKey },
   {
-    call: (apiKey, messages, signal) =>
+    apiKeys: config.nimApiKeys,
+    models: config.nimModels,
+    maxAttemptsPerKey: config.nimMaxAttemptsPerKey,
+  },
+  {
+    call: (apiKey, messages, signal, options) =>
       callNim(
-        { model: config.nimModel, baseUrl: config.nimBaseUrl, timeoutMs: config.nimTimeoutMs },
+        { baseUrl: config.nimBaseUrl, timeoutMs: config.nimTimeoutMs },
         apiKey,
         messages,
         signal,
+        options,
       ),
   },
 );
@@ -24,7 +29,7 @@ const server = createServer(createApp({ config, db, pool }));
 
 server.listen(config.port, () => {
   console.log(
-    `[gateway] :${config.port} — modelo ${config.nimModel}, ${config.nimApiKeys.length} chave(s), banco ${config.databaseUrl}`,
+    `[gateway] :${config.port} — ${config.nimModels.length} modelo(s), ${config.nimApiKeys.length} chave(s), busca ${config.tavilyApiKey ? 'ligada' : 'desligada'}, banco ${config.databaseUrl}`,
   );
 });
 

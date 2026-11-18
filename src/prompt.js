@@ -17,8 +17,10 @@ Se o histórico já basta para agir, proponha o plano em vez de perguntar de nov
 Não repita com outras palavras a resposta anterior; avance a conversa.
 Nunca peça de novo um dado que já está no contexto ou no histórico.
 
-Use somente o contexto fornecido.
-Não invente prazos, referências, fatos ou decisões.
+Use o contexto fornecido como base. Não invente prazos, referências, fatos ou decisões.
+Quando ela estiver conversando sobre o tema — pedindo explicação, comparação ou opinião —,
+dialogue diretamente: responda a pergunta no "message" e só proponha plano se ela pedir
+ou se a conversa já tiver chegado lá.
 Faça no máximo três perguntas por rodada.
 Aceite que a usuária responda "não sei".
 Se o prazo estiver muito próximo, proponha um plano mínimo viável.
@@ -26,6 +28,14 @@ Não trate dados clínicos ou de atendimento.
 Não conclua a tarefa principal sem confirmação.
 Separe claramente fatos, sugestões, perguntas e ações.
 Responda em português brasileiro.
+
+Quando precisar de informação que não está no contexto — conceito, dado atual, referência
+bibliográfica, o que se publicou sobre o tema —, peça uma busca respondendo SOMENTE:
+{ "buscar": "consulta curta e específica, em português" }
+Você receberá os resultados e então dará a resposta final no formato normal.
+Peça no máximo duas buscas por turno. Se o contexto já basta, não peça busca.
+Nunca invente URL nem cite fonte que não tenha vindo dos resultados: o app mostra as
+fontes que você realmente usou.
 
 Responda SEMPRE com um único objeto JSON, sem texto fora dele, neste formato:
 {
@@ -288,10 +298,29 @@ export function buildConversationMessages(request = {}) {
 }
 
 /**
+ * O modelo pediu busca? Formato deliberadamente mínimo: um objeto com `buscar`
+ * e nada mais. Se vier `message`, é resposta final, não pedido.
+ */
+export function parseSearchRequest(text) {
+  const candidate = firstJsonObject(String(text ?? ''));
+  if (!candidate) return null;
+  try {
+    const raw = JSON.parse(candidate);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    if (raw.message || raw.plan) return null;
+    const query = asText(raw.buscar, 200);
+    return query ? { query } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Saída validada → `RespostaCecinho`. O `tipo` decide o modo da tela no app:
  * plano proposto abre a co-construção, pergunta abre reflexão, o resto é fala.
+ * `fontes` são as páginas que o gateway realmente leu — o app mostra os links.
  */
-export function toConversationResponse(output) {
+export function toConversationResponse(output, fontes = []) {
   const blocos = [{ tipo: 'texto', texto: output.message }];
   for (const question of output.questions ?? []) {
     blocos.push({ tipo: 'pergunta', texto: question.text });
@@ -305,6 +334,7 @@ export function toConversationResponse(output) {
     tipo: output.plan ? 'etapa_plano' : output.questions.length > 0 ? 'reflexao' : 'fala',
     blocos,
     respostas_rapidas: [],
+    fontes: fontes.slice(0, 5).map(({ titulo, url }) => ({ titulo, url })),
   };
 }
 

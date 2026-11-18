@@ -17,8 +17,10 @@ import {
   signToken,
   verifyToken,
 } from './auth.js';
-import { containsClinicalData, buildConversationMessages, parseOutput, toConversationResponse } from './prompt.js';
+import { containsClinicalData } from './prompt.js';
 import { runJob } from './jobs.js';
+import { runConversation } from './conversation.js';
+import { createTavilySearch } from './search.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ADMIN_HTML = readFileSync(join(HERE, 'admin.html'), 'utf8');
@@ -119,6 +121,12 @@ export function createApp({
   pool,
   now = () => new Date().toISOString(),
   logger = console,
+  // Injetável no teste; em produção sai da `TAVILY_API_KEY`. Sem chave, o
+  // Cecinho responde sem buscar em vez de derrubar o turno.
+  search = createTavilySearch({
+    apiKey: config.tavilyApiKey,
+    maxResults: config.tavilyMaxResults,
+  }),
 }) {
   const sessions = createRateLimiter();
   const adminAttempts = createRateLimiter();
@@ -179,7 +187,7 @@ export function createApp({
     }
 
     if (method === 'GET' && path === '/models') {
-      return send(res, 200, { default: config.nimModel, models: [config.nimModel] });
+      return send(res, 200, { default: config.nimModels[0], models: config.nimModels });
     }
 
     // --- sessão de dispositivo -------------------------------------------
@@ -327,22 +335,25 @@ export function createApp({
       });
 
       const stream = openEventStream(res);
+      const deadline = Date.now() + config.conversationTimeoutMs;
       stream.fase('lendo_memoria');
 
-      const outcome = await pool.run(buildConversationMessages(request), controller.signal);
+      const outcome = await runConversation({
+        pool,
+        search,
+        request,
+        signal: controller.signal,
+        deadline,
+        onPhase: (fase) => stream.fase(fase),
+      });
+
       if (!outcome.ok) {
         stream.erro(outcome.error.safeMessage);
         return stream.end();
       }
 
-      const parsed = parseOutput(outcome.text);
-      if (!parsed.ok) {
-        stream.erro('o agente respondeu fora do formato esperado');
-        return stream.end();
-      }
-
       stream.fase('resposta');
-      stream.resposta(toConversationResponse(parsed.value));
+      stream.resposta(outcome.value);
       return stream.end();
     }
 
@@ -371,7 +382,8 @@ export function createApp({
         const counts = await db.countJobsByStatus();
         const devices = await db.listDevices(500);
         return send(res, 200, {
-          model: config.nimModel,
+          model: config.nimModels[0],
+          models: config.nimModels,
           keyCount: config.nimApiKeys.length,
           deviceCount: devices.length,
           revokedCount: devices.filter((device) => device.revokedAt).length,

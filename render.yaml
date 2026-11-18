@@ -14,13 +14,15 @@ services:
     envVars:
       - key: NODE_VERSION
         value: '24'
-      - key: NIM_MODEL
-        value: nvidia/nemotron-3.5-bolt-e4b
+      - key: NIM_MODELS
+        value: nvidia/nemotron-3-ultra-550b-a55b,deepseek-ai/deepseek-v4-pro,moonshotai/kimi-k3,z-ai/glm-5-3,openai/gpt-oss-120b
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_AUTH_TOKEN
         sync: false
       - key: NIM_API_KEYS
+        sync: false
+      - key: TAVILY_API_KEY
         sync: false
       - key: GATEWAY_SESSION_SECRET
         sync: false
