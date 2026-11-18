@@ -17,7 +17,7 @@ import {
   signToken,
   verifyToken,
 } from './auth.js';
-import { containsClinicalData } from './prompt.js';
+import { containsClinicalData, buildConversationMessages, parseOutput, toConversationResponse } from './prompt.js';
 import { runJob } from './jobs.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -45,8 +45,7 @@ function send(res, status, body, contentType = 'application/json; charset=utf-8'
   res.end(typeof body === 'string' ? body : JSON.stringify(body));
 }
 
-async function readJson(req, maxBytes) {
-  const chunks = [];
+async function readJson(req, maxBytes) {  const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
@@ -60,6 +59,46 @@ async function readJson(req, maxBytes) {
   } catch {
     return { ok: false };
   }
+}
+
+const SSE_HEARTBEAT_MS = 10_000;
+
+/**
+ * Turno de conversa em SSE (SPEC-038 RF11). `x-accel-buffering: no` importa:
+ * sem ele o Render segura o stream e a fase só chega quando a resposta termina.
+ * O heartbeat segura a conexão enquanto o provedor pensa.
+ */
+function openEventStream(res) {
+  res.writeHead(200, {
+    ...CORS_HEADERS,
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-store, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+  });
+  res.flushHeaders?.();
+  // Cliente que fecha no meio do stream emite EPIPE; sem listener isso derruba o
+  // processo inteiro por um EventEmitter sem 'error'.
+  res.on('error', () => undefined);
+
+  const write = (event, data) => {
+    if (res.writableEnded) return;
+    res.write(`event: ${event}\ndata: ${typeof data === 'string' ? data : JSON.stringify(data)}\n\n`);
+  };
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded) res.write(': ping\n\n');
+  }, SSE_HEARTBEAT_MS);
+  heartbeat.unref?.();
+
+  return {
+    fase: (fase) => write('fase', fase),
+    resposta: (value) => write('resposta', value),
+    erro: (message) => write('erro', message),
+    end: () => {
+      clearInterval(heartbeat);
+      if (!res.writableEnded) res.end();
+    },
+  };
 }
 
 /**
@@ -84,6 +123,7 @@ export function createApp({
   const sessions = createRateLimiter();
   const adminAttempts = createRateLimiter();
   const jobAttempts = createRateLimiter();
+  const conversationAttempts = createRateLimiter();
   const startedAt = Date.now();
 
   const clientIp = (req) => req.socket?.remoteAddress ?? 'desconhecido';
@@ -261,6 +301,49 @@ export function createApp({
         createdAt: job.createdAt,
         updatedAt: job.updatedAt,
       });
+    }
+
+    // --- conversa (SPEC-038): turno do Cecinho em SSE ---------------------
+    if (method === 'POST' && path === '/agent/conversa') {
+      const auth = await authenticateDevice(req);
+      if (!auth.ok) return send(res, auth.status, { error: auth.error });
+      if (rateLimited(res, conversationAttempts, auth.device.id, config.conversationsPerMinutePerDevice)) {
+        return;
+      }
+
+      const body = await readJson(req, config.maxBodyBytes);
+      if (!body.ok) return send(res, body.tooLarge ? 413 : 400, { error: 'corpo inválido' });
+
+      const request = body.value ?? {};
+      // Mesma barreira do job, pelo mesmo motivo: dado clínico não sai do aparelho.
+      if (containsClinicalData(JSON.stringify(request))) {
+        return send(res, 422, { error: 'conteúdo clínico não é enviado ao agente' });
+      }
+
+      const controller = new AbortController();
+      // Se ela fecha a conversa, para de gastar token do provedor.
+      res.on('close', () => {
+        if (!res.writableEnded) controller.abort();
+      });
+
+      const stream = openEventStream(res);
+      stream.fase('lendo_memoria');
+
+      const outcome = await pool.run(buildConversationMessages(request), controller.signal);
+      if (!outcome.ok) {
+        stream.erro(outcome.error.safeMessage);
+        return stream.end();
+      }
+
+      const parsed = parseOutput(outcome.text);
+      if (!parsed.ok) {
+        stream.erro('o agente respondeu fora do formato esperado');
+        return stream.end();
+      }
+
+      stream.fase('resposta');
+      stream.resposta(toConversationResponse(parsed.value));
+      return stream.end();
     }
 
     // --- admin -----------------------------------------------------------

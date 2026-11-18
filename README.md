@@ -39,6 +39,7 @@ Conteúdo clínico é recusado (`422`) antes de qualquer chamada ao provedor.
 | POST | `/v1/auth/session` | `X-App-Key` | abre sessão do aparelho |
 | POST | `/v1/agent/jobs` | Bearer | cria job (202) |
 | GET | `/v1/agent/jobs/:id` | Bearer | estado, mensagens, plano, artefatos |
+| POST | `/v1/agent/conversa` | Bearer | turno do Cecinho em SSE (`fase`, `resposta`, `erro`) |
 | POST | `/v1/admin/login` | senha | token do painel (1h) |
 | GET | `/v1/admin/overview` | admin | modelo, chaves, contadores |
 | GET | `/v1/admin/devices` | admin | aparelhos conhecidos |

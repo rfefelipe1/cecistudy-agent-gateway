@@ -13,6 +13,7 @@ const DEFAULTS = {
   sessionsPerMinutePerIp: 10,
   adminPerMinutePerIp: 5,
   jobsPerMinutePerDevice: 6,
+  conversationsPerMinutePerDevice: 20,
   maxBodyBytes: 262_144,
 };
 
@@ -53,6 +54,10 @@ export function loadConfig(env = process.env) {
     sessionsPerMinutePerIp: positiveNumber(env.SESSIONS_PER_MINUTE_PER_IP, DEFAULTS.sessionsPerMinutePerIp),
     adminPerMinutePerIp: positiveNumber(env.ADMIN_PER_MINUTE_PER_IP, DEFAULTS.adminPerMinutePerIp),
     jobsPerMinutePerDevice: positiveNumber(env.JOBS_PER_MINUTE_PER_DEVICE, DEFAULTS.jobsPerMinutePerDevice),
+    conversationsPerMinutePerDevice: positiveNumber(
+      env.CONVERSATIONS_PER_MINUTE_PER_DEVICE,
+      DEFAULTS.conversationsPerMinutePerDevice,
+    ),
     maxBodyBytes: positiveNumber(env.MAX_BODY_BYTES, DEFAULTS.maxBodyBytes),
   };
 

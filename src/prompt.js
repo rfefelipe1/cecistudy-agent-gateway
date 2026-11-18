@@ -264,6 +264,50 @@ export function parseOutput(text) {
   return { ok: false };
 }
 
+/**
+ * Turno de conversa (SPEC-038 RF11/RF12). O modelo continua devolvendo **um**
+ * formato JSON — o mesmo do job; a tradução para `RespostaCecinho` acontece
+ * aqui, então o mobile nunca vê texto cru.
+ */
+export function buildConversationMessages(request = {}) {
+  const rascunho = asText(request?.rascunho, 2000);
+  const contexto = {
+    habilidade: asText(request?.skill_id, 40) || 'geral',
+    tarefa: request?.tarefa ?? {},
+    memoria: request?.memoria ?? {},
+    fichas: Array.isArray(request?.fichas) ? request.fichas.slice(0, 5) : [],
+    ...(rascunho ? { rascunho } : {}),
+  };
+
+  return buildMessages({
+    kind: 'analyze',
+    message: request?.mensagem ?? '',
+    context: contexto,
+    history: request?.historico ?? [],
+  });
+}
+
+/**
+ * Saída validada → `RespostaCecinho`. O `tipo` decide o modo da tela no app:
+ * plano proposto abre a co-construção, pergunta abre reflexão, o resto é fala.
+ */
+export function toConversationResponse(output) {
+  const blocos = [{ tipo: 'texto', texto: output.message }];
+  for (const question of output.questions ?? []) {
+    blocos.push({ tipo: 'pergunta', texto: question.text });
+  }
+  for (const step of output.plan?.steps ?? []) {
+    blocos.push({ tipo: 'etapa', texto: step.title });
+  }
+
+  return {
+    versao_contrato: '1.0',
+    tipo: output.plan ? 'etapa_plano' : output.questions.length > 0 ? 'reflexao' : 'fala',
+    blocos,
+    respostas_rapidas: [],
+  };
+}
+
 function slug(text) {
   return String(text)
     .toLowerCase()

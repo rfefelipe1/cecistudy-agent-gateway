@@ -43,6 +43,7 @@ async function boot() {
     sessionsPerMinutePerIp: 100,
     adminPerMinutePerIp: 100,
     jobsPerMinutePerDevice: 100,
+    conversationsPerMinutePerDevice: 100,
     maxBodyBytes: 262_144,
   };
 
@@ -76,6 +77,19 @@ async function adminSession(base) {
     body: JSON.stringify({ password: 'senha-admin' }),
   });
   return response.json();
+}
+
+/** Lê o corpo SSE inteiro e separa os eventos (o turno termina sozinho). */
+async function sseEvents(response) {
+  const text = await response.text();
+  return text
+    .split('\n\n')
+    .map((block) => block.trim())
+    .filter((block) => block && !block.startsWith(':'))
+    .map((block) => ({
+      evento: /^event:\s*(.*)$/m.exec(block)?.[1]?.trim() ?? 'message',
+      data: [...block.matchAll(/^data:\s?(.*)$/gm)].map((match) => match[1]).join('\n'),
+    }));
 }
 
 async function waitForJob(base, token, operationId) {
@@ -271,6 +285,67 @@ test('rota sem /v1 funciona igual', async (t) => {
     body: JSON.stringify({ taskId: 'task-1', kind: 'analyze', payload: { message: 'oi' } }),
   });
   assert.equal(response.status, 202);
+});
+
+test('conversa em SSE devolve as fases e a resposta no contrato do app', async (t) => {
+  const { base, pool, close } = await boot();
+  t.after(close);
+
+  const { token } = await session(base, 'aparelho-1234');
+  const response = await fetch(`${base}/v1/agent/conversa`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      mensagem: 'quero começar o tcc',
+      skill_id: 'tcc',
+      tarefa: { titulo: 'tcc' },
+      historico: [],
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /text\/event-stream/);
+
+  const eventos = await sseEvents(response);
+  assert.deepEqual(
+    eventos.filter((evento) => evento.evento === 'fase').map((evento) => evento.data),
+    ['lendo_memoria', 'resposta'],
+  );
+
+  const resposta = JSON.parse(eventos.find((evento) => evento.evento === 'resposta').data);
+  assert.equal(resposta.tipo, 'etapa_plano');
+  assert.deepEqual(
+    resposta.blocos.map((bloco) => bloco.tipo),
+    ['texto', 'pergunta', 'etapa', 'etapa'],
+  );
+  assert.equal(pool.calls, 1);
+});
+
+test('conversa exige sessão de aparelho', async (t) => {
+  const { base, close } = await boot();
+  t.after(close);
+
+  const response = await fetch(`${base}/v1/agent/conversa`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ mensagem: 'oi' }),
+  });
+  assert.equal(response.status, 401);
+});
+
+test('conversa recusa conteúdo clínico antes do provedor', async (t) => {
+  const { base, pool, close } = await boot();
+  t.after(close);
+
+  const { token } = await session(base, 'aparelho-1234');
+  const response = await fetch(`${base}/v1/agent/conversa`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ mensagem: 'resumir o prontuário da paciente' }),
+  });
+
+  assert.equal(response.status, 422);
+  assert.equal(pool.calls, 0);
 });
 
 test('admin entra, lista e revoga aparelho', async (t) => {
