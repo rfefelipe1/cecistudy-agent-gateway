@@ -172,8 +172,8 @@ export function createApp({
       return res.end();
     }
 
-    if (method === 'GET' && path === '/healthz') {
-      return send(res, 200, { ok: true, at: now() });
+    if (method === 'GET' && (path === '/healthz' || path === '/ping')) {
+      return send(res, 200, { ok: true, pong: path === '/ping', at: now() });
     }
 
     if (method === 'GET' && path === '/') {

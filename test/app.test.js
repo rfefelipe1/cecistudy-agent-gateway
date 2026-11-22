@@ -125,6 +125,18 @@ test('healthz responde sem autenticação', async (t) => {
   assert.equal((await response.json()).ok, true);
 });
 
+test('ping responde sem autenticação e sinaliza pong', async (t) => {
+  const { base, close } = await boot();
+  t.after(close);
+
+  const response = await fetch(`${base}/ping`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.pong, true);
+  assert.equal(typeof body.at, 'string');
+});
+
 test('preflight CORS libera o app no navegador e no WebView', async (t) => {
   const { base, close } = await boot();
   t.after(close);

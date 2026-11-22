@@ -28,6 +28,12 @@ const DEFAULTS = {
   jobsPerMinutePerDevice: 6,
   conversationsPerMinutePerDevice: 20,
   maxBodyBytes: 262_144,
+  // Keepalive: ping interno (localhost/healthz) + ping externo (URL confiável).
+  // O externo padrão é um endpoint estável do Google; troque por um monitor que
+  // bata na URL pública do serviço se quiser evitar sleep do Render por inatividade.
+  keepaliveIntervalMs: 5 * 60_000,
+  keepaliveTimeoutMs: 10_000,
+  keepaliveUrl: 'https://www.gstatic.com/generate_204',
 };
 
 const REQUIRED = [
@@ -78,6 +84,9 @@ export function loadConfig(env = process.env) {
       DEFAULTS.conversationsPerMinutePerDevice,
     ),
     maxBodyBytes: positiveNumber(env.MAX_BODY_BYTES, DEFAULTS.maxBodyBytes),
+    keepaliveIntervalMs: positiveNumber(env.KEEPALIVE_INTERVAL_MS, DEFAULTS.keepaliveIntervalMs),
+    keepaliveTimeoutMs: positiveNumber(env.KEEPALIVE_TIMEOUT_MS, DEFAULTS.keepaliveTimeoutMs),
+    keepaliveUrl: env.KEEPALIVE_URL?.trim() || DEFAULTS.keepaliveUrl,
   };
 
   const missing = REQUIRED.filter(([key]) => !env[key]?.trim()).map(
